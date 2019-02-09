@@ -43,7 +43,7 @@ castRemotePtr (RemotePtr a) = RemotePtr a
 
 type DataArg = WordPtr
 
-foreign import ccall unsafe "ptrace" c_ptrace :: CInt -> CPid -> Ptr a -> Ptr b -> IO CLong
+foreign import ccall safe "ptrace" c_ptrace :: CInt -> CPid -> Ptr a -> Ptr b -> IO CLong
 
 
 data Event = EventFork | EventVFork | EventClone | EventExec | EventVForkDone | EventExit deriving (Eq, Show)
