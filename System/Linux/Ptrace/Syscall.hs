@@ -1,8 +1,10 @@
 {-# LANGUAGE ForeignFunctionInterface, GeneralizedNewtypeDeriving #-}
 
--- | Sadly, only the OS thread which performed the ptrace_attach is allowed
+-- | Note on __behaviour on multi-threaded programs:__
+--
+-- Sadly, only the OS thread which performed the ptrace_attach is allowed
 -- to mess with the traced process. This means that users of this module will
--- need to forkOS or runInBoundThread in order to get reliable behaviour.
+-- need to @forkOS@ or @runInBoundThread@ in order to get reliable behaviour.
 
 module System.Linux.Ptrace.Syscall (
   RemotePtr(),
