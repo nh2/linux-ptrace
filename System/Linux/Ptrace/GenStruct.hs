@@ -58,10 +58,6 @@ genStruct name ctors elemType = do
   -- 3) We can't capture Storable in a type quotation since it's a class name.
   --storableInst <- instanceD (cxt []) [t|Storable $(conT name')|] ...
 
-  -- Work around instanceD's nasty interface
-  let fixDecs :: Q [Dec] -> Q [DecQ]
-      fixDecs decs = (fmap.fmap) return decs
-
   -- Eek, can't substitute this below: TH lifting is not referentially transparent
   let numCtors = length ctors
 
