@@ -9,6 +9,8 @@ module System.Linux.Ptrace (
   detach,
 
   peekBytes,
+  peekNullTerminatedBytes,
+  peekNullWordTerminatedWords,
   pokeBytes,
 
   peek
@@ -94,6 +96,77 @@ peekBytes proc addr_ size = (BS.take size . BS.drop extraBytes . joinWords) `fma
   joinWords = BS.pack . (extractBytes =<<)
   -- Assuming little-endian :O Could use peekByteOff instead?
   extractBytes n = map (fromIntegral . (0xff .&.) . (n `shiftR`)) [0, 8 .. fromIntegral $ 8*wordSize-1]
+
+peekNullTerminatedBytes :: TracedProcess -> Ptr a -> IO BS.ByteString
+peekNullTerminatedBytes proc addr_ = BS.pack `fmap` peekUntilZeroByteDroppingFirstNBytes extraBytes readPtrs
+ where
+  addr = ptrToWordPtr addr_
+  wordSize = fromIntegral $ sizeOf addr
+  alignedAddr = addr .&. complement (wordSize - 1)
+  extraBytes = fromIntegral $ addr - alignedAddr
+  readPtrs = map (wordPtrToPtr . fromIntegral) [alignedAddr, alignedAddr+wordSize ..]
+  -- Assuming little-endian :O Could use peekByteOff instead?
+  extractBytes n = map (fromIntegral . (0xff .&.) . (n `shiftR`)) [0, 8 .. fromIntegral $ 8*wordSize-1]
+  peekUntilZeroByteDroppingFirstNBytes numToDrop ptrs = case ptrs of
+    [] -> return []
+    ptr:restPtrs -> do
+      w <- ptrace_peekdata (pid proc) ptr
+      let bytes = drop numToDrop (extractBytes w)
+      if any (== 0) bytes
+        then return $ takeWhile (/= 0) bytes
+        else do
+          rest <- peekUntilZeroByteDroppingFirstNBytes 0 restPtrs
+          return (bytes ++ rest)
+
+peekNullWordTerminatedWords :: TracedProcess -> Ptr Word -> IO [Word]
+peekNullWordTerminatedWords proc addr_ = peekUntilZeroWord readPtrs
+ where
+  -- We must make Word-aligned reads, but the requested words may not have
+  -- byte-aligned addresses. In that case, we have to combine two different
+  -- word-aligned reads per word to check for nullity.
+  addr = ptrToWordPtr addr_
+  wordSize = fromIntegral $ sizeOf addr
+  wordSizeInt = fromIntegral $ sizeOf addr
+  alignedAddr = addr .&. complement (wordSize - 1)
+  isWordAligned = addr == alignedAddr
+  extraBytes = fromIntegral $ addr - alignedAddr
+  readPtrs = map (wordPtrToPtr . fromIntegral) [alignedAddr, alignedAddr+wordSize ..]
+  -- Assuming little-endian :O Could use peekByteOff instead?
+  peekUntilZeroWord ptrs = case ptrs of
+    [] -> return []
+    ptr:restPtrs -> do
+      w <-
+        if isWordAligned
+          then ptrace_peekdata (pid proc) ptr
+          else do
+            -- TODO: This does twice as many `ptrace_peekdata`s as we need,
+            --       remember them across loop invocations instead
+
+            -- Consider on 64-bit, an unaligned read with offset 5 bytes (extraBytes=5):
+            --
+            --           w1               w2
+            --     0000000000abcdef 0123456789000000
+            --               ^^^^^^ ^^^^^^^^^^
+            --                 |        |
+            --             shift this   |
+            --            5 bytes left  |
+            --                          |
+            --                      shift this
+            --                   (8-5) bytes right
+            --  to form
+            --
+            --    abcdef0123456789
+            --
+            w1 <- ptrace_peekdata (pid proc) ptr
+            w2 <- ptrace_peekdata (pid proc) (ptr `plusPtr` wordSizeInt)
+            let part1 = w1 `shiftL` (extraBytes * 8)
+            let part2 = w2 `shiftR` ((wordSizeInt - extraBytes) * 8)
+            return (part1 .|. part2)
+      if w == 0
+        then return []
+        else do
+          ws <- peekUntilZeroWord restPtrs
+          return (w:ws)
 
 -- FIXME: Is it more efficient to keep /proc/<...>/mem open and write to that?
 --        Does the kernel even support that?
